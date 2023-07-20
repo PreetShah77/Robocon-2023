@@ -1,0 +1,264 @@
+#include "PS4.h"
+#include "Drive.h"
+#include <Servo.h>
+#include <PID_v1.h>
+#include <AccelStepper.h>
+#include <math.h>
+//movement variables
+int f_pwm, b_pwm, l_pwm, r_pwm, lr_pwm, rr_pwm;
+int correction_factorright = 0;
+int correction_factorleft = 0;
+int robot_speed = 255;
+int pwm;
+//esc
+Servo esc1;
+Servo esc2;
+//pid
+Servo myServo;
+int countesc = 0;
+double distance;
+double strength;
+double deg = 0;
+bool pidset = false;
+bool setx = true;
+bool sety = false;
+bool checksum = false;
+bool receiveComplete1 = false;
+double set_posx = 42;
+double outputx;
+double kpx = 10;
+double kdx = 0.9;
+double kix = 0.7;
+double set_posy = 52;
+double outputy;
+double kpy = 10;
+double kdy = 0.9;
+double kiy = 0.7;
+double set_posd = 0;
+double outputd;
+double kpd = 5;
+double kdd = 0.1;
+double kid = 0.3;
+double currenttime;
+double previoustime;
+double temptime;
+double looptime;
+double intervaldeg = 3000;
+double intervalx = 5000;
+double intervaly = 7000;
+int i;
+PID PIDX(&distance, &outputx, &set_posx, kpx, kdx, kix, DIRECT);
+PID PIDY(&distance, &outputy, &set_posy, kpy, kdy, kiy, DIRECT);
+PID PIDDEG(&deg, &outputd, &set_posd, kpd, kdd, kid, DIRECT);
+//johnson
+// int johnr1=36;
+// int johnr2=34;
+// int johnl1=32;
+// int johnl2=30;
+// int limit1=55;
+// int limit2=56;
+//stepper
+long anglex[9] = { -10, 1, 10, 1 };   // down
+long angley[9] = { 10, 20, 30, 1 };   //up
+long anglex1[9] = { -10, 1, 10, 1 };  //down
+long angley1[9] = { 10, 20, 30, 1 };  //up
+const int stepPin4 = 45;
+const int dirPin4 = 43;
+const int stepPin2 = 33;
+const int dirPin2 = 31;
+const int stepPin1 = 27;  // step1
+const int dirPin1 = 25;
+long angle1, angle2, angle3, angle4;
+const int stepPin3 = 39;
+const int dirPin3 = 37;
+const int stepsPerRev = 3200;
+AccelStepper stepper1(AccelStepper::DRIVER, stepPin1, dirPin1, 23);
+AccelStepper stepper2(AccelStepper::DRIVER, stepPin2, dirPin2, 29);
+AccelStepper stepper3(AccelStepper::DRIVER, stepPin3, dirPin3, 35);
+AccelStepper stepper4(AccelStepper::DRIVER, stepPin4, dirPin4, 41);
+void loop() {
+  ps4_data();
+
+  if (newData == true) {
+    strcpy(tempChars, receivedChars);
+    split_data();
+    newData = false;
+  }
+  //analog ps4 buttons mapping
+  f_pwm = map(l_y_value, 10, 130, 10, robot_speed);
+  b_pwm = map(l_y_value, -10, -130, 10, robot_speed);
+  l_pwm = map(r_x_value, 10, 130, 10, robot_speed);
+  r_pwm = map(r_x_value, -10, -130, 10, robot_speed);
+  rr_pwm = map(r_value, 0, 255, 10, robot_speed);
+  lr_pwm = map(l_value, 0, 255, 10, robot_speed);
+
+  //Pid loop 
+  while (pidset == true) {
+    Serial2.println('s');
+    while (!receiveComplete1) {
+      getTFminiData1(&distance, &strength, &receiveComplete1);
+    }
+    receiveComplete1 = false;
+    // Serial.println(distance);
+
+    while (Serial1.available()) {
+      String x = Serial1.readStringUntil('\n');
+      deg = x.toDouble();
+      // Serial.println(deg);
+    }
+    currenttime = millis();
+    if (i == 0) {
+      temptime = currenttime;
+      i = 1;
+    }
+    looptime = currenttime - temptime;
+
+    Serial.print("   currenttime   ");
+    Serial.print(currenttime);
+    Serial.print("   temptime   ");
+    Serial.print(temptime);
+    Serial.print("    looptime   ");
+    Serial.println(looptime);
+    if (looptime <= intervaldeg) {
+      setdegree();
+      Serial.println("setting degree");
+    } else {
+    
+      if (looptime <= intervalx)
+      {
+        myServo.write(90);
+        Serial.println("setting x");
+        setposx();
+      } else {
+        if (looptime <= intervaly)
+        {
+          myServo.write(0);
+          Serial.println("setting y");
+          setposy();
+        } else{
+          myServo.write(90);
+          Serial2.println('q');
+          pidset = false;
+          //  myServo.write(90);
+          // i = 0;
+        }
+      }
+    }
+  }
+  //analog movement
+  if (l_value > 5) Left_rotate(lr_pwm); //l1 button
+  else if (r_value > 5) Right_rotate(rr_pwm); //r1 button
+  else if (r_x_value < -10) Right(r_pwm); //analog right hat
+  else if (r_x_value > 10) Left(l_pwm); // analog right hat
+  else if (l_y_value > 10) Forward(f_pwm); // analog left hat
+  else if (l_y_value < -10) Backward(b_pwm); // analog left hat
+  //Left button to set degree
+  if (button_value[0] == 'B') {
+    pidset = true;
+  } 
+  //Down button to make esc on and press 2 times to make esc off
+  else if (button_value[0] == 'C') {
+    //     esc1.write(150);
+    // esc2.write(150);
+    if (countesc % 2 == 0) {
+      esc1.write(150);
+      esc2.write(150);
+    } else {
+      esc1.write(30);
+      esc2.write(30);
+    }
+  }
+  countesc++;
+
+  if (button_value[0] == 'D') {
+    // digitalWrite(johnl1,HIGH);
+    // digitalWrite(johnl2,LOW);
+    // digitalWrite(johnr1,HIGH);
+    // digitalWrite(johnr2,LOW);
+    // esc1.write(30);
+    // esc2.write(30);
+  } 
+  //setting pole angle x mechanism
+  else if (button_value[0] == 'a') {
+    angle1 = anglex[0];
+    angle2 = angley[0];
+    stepangle1(angle1);
+    stepangle2(angle2);
+  } 
+  //setting pole angle x mechanism
+  else if (button_value[0] == 'b') {
+    angle1 = anglex[1];
+    angle2 = angley[1];
+    stepangle1(angle1);
+    stepangle2(angle2);
+  } 
+  //setting pole angle x mechanism
+  else if (button_value[0] == 'c') {
+    angle1 = anglex[2];
+    angle2 = angley[2];
+    stepangle1(angle1);
+    stepangle2(angle2);
+  }
+  //setting pole angle x mechanism
+   else if (button_value[0] == 'd') {
+    angle1 = anglex[3];
+    angle2 = angley[3];
+    stepangle1(angle1);
+    stepangle2(angle2);
+  } 
+  //setting pole angle y mechanism
+  else if (button_value[0] == 'e') {
+    angle3 = anglex1[0];
+    angle4 = angley1[0];
+    stepangle3(angle3);
+    stepangle4(angle4);
+  } 
+  //setting pole angle y mechanism
+  else if (button_value[0] == 'f') {
+    angle3 = anglex1[1];
+    angle4 = angley1[1];
+    stepangle3(angle3);
+    stepangle4(angle4);
+  } 
+  //setting pole angle y mechanism
+  else if (button_value[0] == 'g') {
+    angle3 = anglex1[2];
+    angle4 = angley1[2];
+    stepangle3(angle3);
+    stepangle4(angle4);
+  } 
+  //setting pole angle y mechanism
+  else if (button_value[0] == 'h') {
+    angle3 = anglex1[3];
+    angle4 = angley1[3];
+    stepangle3(angle3);
+    stepangle4(angle4);
+  } 
+  //else part for limit switches and hold() functoion;
+  else {
+    Hold();
+    // if(leftpickmax==0){
+    //   digitalWrite(johnl1,LOW);
+    //   digitalWrite(johnl2,LOW);
+    // }
+    // if(rightpickmax==0){
+    //   digitalWrite(johnr1,LOW);
+    //   digitalWrite(johnr2,LOW);
+    // }
+  }
+  //printing ps4 values
+  Serial.print('<');
+  Serial.print(button_value);
+  Serial.print(',');
+  Serial.print(l_value);
+  Serial.print(',');
+  Serial.print(r_value);
+  Serial.print(',');
+  Serial.print(l_y_value);
+  Serial.print(',');
+  Serial.print(r_x_value);
+  Serial.print('>');
+
+  Serial.println();
+}
+// }
